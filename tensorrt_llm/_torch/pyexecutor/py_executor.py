@@ -8,7 +8,7 @@ import traceback
 from contextlib import contextmanager
 from enum import IntEnum
 from queue import Queue
-from typing import Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
 
@@ -386,6 +386,10 @@ class PyExecutor:
         self.response_cv = threading.Condition(self.response_lock)
         self.responses = {}
         self.result_wait_queues = {}
+        self._request_termination_callbacks: Dict[
+            int, Callable[["PyExecutor", LlmRequest], None]] = {}
+        self._next_request_termination_callback_id = 0
+        self._request_termination_callback_emitted: set[int] = set()
 
         # kv cache events
         self.kv_cache_manager = self.resource_manager.resource_managers.get(
@@ -877,6 +881,61 @@ class PyExecutor:
 
     def set_gather_responses(self, gather_all_responses):
         self.gather_all_responses = gather_all_responses
+
+    def add_request_termination_callback(
+            self, callback: Callable[["PyExecutor", LlmRequest], None]) -> int:
+        """Register a callback run before request resources are released.
+
+        The callback receives ``(executor, request)`` while the request's KV
+        cache blocks are still owned by the KV cache manager. It is intended for
+        debugging and cache export flows that need to inspect request state at
+        completion time.
+        """
+        callback_id = self._next_request_termination_callback_id
+        self._next_request_termination_callback_id += 1
+        self._request_termination_callbacks[callback_id] = callback
+        return callback_id
+
+    def remove_request_termination_callback(self, callback_id: int) -> None:
+        self._request_termination_callbacks.pop(callback_id, None)
+
+    def export_request_kv_cache(self,
+                                request: LlmRequest,
+                                *,
+                                kv_layout: str = "NHD",
+                                layers: Optional[list[int]] = None,
+                                max_layers: Optional[int] = None,
+                                clone: bool = False) -> Any:
+        from .kv_cache_export import export_request_kv_cache
+
+        return export_request_kv_cache(
+            self.resource_manager,
+            request,
+            kv_layout=kv_layout,
+            layers=layers,
+            max_layers=max_layers,
+            clone=clone,
+        )
+
+    def _emit_request_termination_callbacks(self, request: LlmRequest) -> None:
+        if not self._request_termination_callbacks:
+            return
+        if request.is_dummy_request:
+            return
+
+        request_id = int(request.py_request_id)
+        if request_id in self._request_termination_callback_emitted:
+            return
+        self._request_termination_callback_emitted.add(request_id)
+
+        for callback_id, callback in list(
+                self._request_termination_callbacks.items()):
+            try:
+                callback(self, request)
+            except Exception as exc:
+                logger.error(
+                    f"Request termination callback {callback_id} failed for "
+                    f"request {request_id}: {exc}\n{traceback.format_exc()}")
 
     @property
     def should_stop_processing(self):
@@ -3569,6 +3628,7 @@ class PyExecutor:
             self._terminate_request(request)
 
     def _terminate_request(self, request: LlmRequest):
+        self._emit_request_termination_callbacks(request)
         # Dummy requests don't participate in disagg KV cache transfers,
         # so they must bypass the PP termination handler to avoid stale
         # sequences in the KV cache manager (the handler delays removal,
@@ -3580,7 +3640,12 @@ class PyExecutor:
             self._do_terminate_request(request)
 
     def _do_terminate_request(self, request: LlmRequest):
-        self.resource_manager.free_resources(request)
+        self._emit_request_termination_callbacks(request)
+        try:
+            self.resource_manager.free_resources(request)
+        finally:
+            self._request_termination_callback_emitted.discard(
+                int(request.py_request_id))
 
         if self.gather_all_responses or self.dist.rank == 0:
             self.result_wait_queues.pop(request.py_request_id, None)

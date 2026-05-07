@@ -5,7 +5,7 @@ import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import zmq
 
@@ -85,6 +85,20 @@ class GenerationExecutorWorker(RpcWorkerMixin, BaseWorker):
         # Stats and KV events are now fetched on-demand via RPC,
         # so we only need to start the response thread
         self.start_thread(self.await_response_thread)
+
+    def add_request_termination_callback(self, callback: Callable) -> int:
+        if not hasattr(self.engine, "add_request_termination_callback"):
+            raise NotImplementedError(
+                "Request termination callbacks are only supported by the "
+                "PyTorch backend.")
+        return self.engine.add_request_termination_callback(callback)
+
+    def remove_request_termination_callback(self, callback_id: int) -> None:
+        if not hasattr(self.engine, "remove_request_termination_callback"):
+            raise NotImplementedError(
+                "Request termination callbacks are only supported by the "
+                "PyTorch backend.")
+        self.engine.remove_request_termination_callback(callback_id)
 
     def shutdown(self):
 

@@ -9,8 +9,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 from queue import Queue
-from typing import (TYPE_CHECKING, AsyncIterable, Dict, Generator, List,
-                    Optional, Union)
+from typing import (TYPE_CHECKING, AsyncIterable, Callable, Dict, Generator,
+                    List, Optional, Union)
 
 import numpy as np
 import torch
@@ -115,6 +115,16 @@ class GenerationExecutor(ABC):
     @abstractmethod
     def abort_request(self, request_id: int) -> None:
         pass
+
+    def add_request_termination_callback(self, callback: Callable) -> int:
+        raise NotImplementedError(
+            "Request termination callbacks are only supported by the PyTorch "
+            "backend single-process worker.")
+
+    def remove_request_termination_callback(self, callback_id: int) -> None:
+        raise NotImplementedError(
+            "Request termination callbacks are only supported by the PyTorch "
+            "backend single-process worker.")
 
     def generate_async(
         self,

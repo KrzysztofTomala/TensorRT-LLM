@@ -9,7 +9,8 @@ import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Literal, Optional, Sequence, Tuple, Union, cast
+from typing import (Any, Callable, List, Literal, Optional, Sequence, Tuple,
+                    Union, cast)
 
 import transformers
 from tqdm import tqdm
@@ -788,6 +789,20 @@ class BaseLLM:
             tensorrt_llm.executor.result.IterationResult: An async iterable object containing runtime events.
         '''
         return self._executor.aget_kv_events(timeout=timeout)
+
+    @set_api_status("beta")
+    def add_request_termination_callback(self, callback: Callable) -> int:
+        """Register a callback run before completed request resources are freed.
+
+        This is currently supported by the PyTorch backend single-process worker.
+        It allows advanced integrations to snapshot runtime state, including
+        live KV cache blocks, before TensorRT-LLM releases them.
+        """
+        return self._executor.add_request_termination_callback(callback)
+
+    @set_api_status("beta")
+    def remove_request_termination_callback(self, callback_id: int) -> None:
+        self._executor.remove_request_termination_callback(callback_id)
 
     def _process_env_overrides(self,
                                env_overrides: Optional[dict[str, str]]) -> None:
