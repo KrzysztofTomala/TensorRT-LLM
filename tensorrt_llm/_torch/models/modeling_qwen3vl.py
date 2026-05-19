@@ -1110,8 +1110,14 @@ class Qwen3VLModelBase(PreTrainedModel):
             return_context_logits=return_context_logits,
             deepstack_embeds=deepstack_embeds,
             mrope_config=mrope_config,
+            spec_metadata=kwargs.get("spec_metadata"),
+            resource_manager=kwargs.get("resource_manager"),
+            lora_params=kwargs.get("lora_params", None),
         )
-        logger.debug(f"output shape: {output_prob.shape}")
+        if isinstance(output_prob, dict):
+            logger.debug(f"output keys: {list(output_prob.keys())}")
+        else:
+            logger.debug(f"output shape: {output_prob.shape}")
         return output_prob
 
     def _get_requests_with_mm_data(self, multimodal_params):

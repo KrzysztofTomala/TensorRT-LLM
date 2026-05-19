@@ -1574,8 +1574,16 @@ class PyTorchModelEngine(ModelEngine):
                     'attn_metadata'].num_chunked_ctx_requests
                 previous_batch_tokens = inputs['input_ids'].shape[
                     0] - num_ctx_tokens
-                inputs['position_ids'][0, num_ctx_tokens:] += (
-                    self.previous_pos_id_offsets_cuda[:previous_batch_tokens])
+                if previous_batch_tokens > 0:
+                    position_ids_tail = inputs['position_ids'][0, num_ctx_tokens:]
+                    pos_offsets = self.previous_pos_id_offsets_cuda[:
+                                                                     previous_batch_tokens]
+                    if pos_offsets.numel() == position_ids_tail.numel():
+                        pos_offsets = pos_offsets.reshape_as(position_ids_tail)
+                    else:
+                        while pos_offsets.ndim < position_ids_tail.ndim:
+                            pos_offsets = pos_offsets.unsqueeze(-1)
+                    position_ids_tail += pos_offsets
                 if hasattr(inputs['attn_metadata'], 'kv_lens_cuda'):
                     if num_ctx_requests >= num_chunked_ctx_requests and num_chunked_ctx_requests > 0:
                         # The generation requests with draft_tokens are treated as chunked context requests when extend_ctx returns True.

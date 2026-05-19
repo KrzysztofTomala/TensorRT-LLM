@@ -542,10 +542,30 @@ class Eagle3ForCausalLM(DecoderModelForCausalLM[Eagle3DraftModel,
                 super().load_weights(weights=new_weights,
                                      weight_mapper=weight_mapper)
 
+    @staticmethod
+    def _get_target_embed_tokens(target_model: torch.nn.Module) -> torch.nn.Module:
+        model = getattr(target_model, "model", None)
+        llm = getattr(target_model, "llm", None)
+        modules = (
+            model,
+            getattr(model, "language_model", None),
+            getattr(target_model, "language_model", None),
+            llm,
+            getattr(llm, "model", None),
+            target_model,
+        )
+        for module in modules:
+            embed_tokens = getattr(module, "embed_tokens", None)
+            if embed_tokens is not None:
+                return embed_tokens
+        raise AttributeError(
+            f"Could not find target embedding module for {type(target_model).__name__}."
+        )
+
     def load_weights_from_target_model(self,
                                        target_model: torch.nn.Module) -> None:
         if self.model.embed_tokens is None:
-            self.model.embed_tokens = target_model.model.embed_tokens
+            self.model.embed_tokens = self._get_target_embed_tokens(target_model)
         if self.load_lm_head_from_target:
             self.lm_head = target_model.lm_head
 
